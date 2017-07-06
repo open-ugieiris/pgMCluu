@@ -1,0 +1,6 @@
+######## Transform data of pgcluu to apache content
+*/5 * * * * /var/lib/pgsql/pgcluu/data2html.sh > /dev/null 2>&1
+01 00 * * * /sbin/service pgcluu restart > /var/lib/pgsql/pgcluu/logs/cron-pgcluu-restart.log 2>&1
+01 06 * * * /sbin/service pgcluu restart > /var/lib/pgsql/pgcluu/logs/cron-pgcluu-restart.log 2>&1
+01 12 * * * /sbin/service pgcluu restart > /var/lib/pgsql/pgcluu/logs/cron-pgcluu-restart.log 2>&1
+01 18 * * * /sbin/service pgcluu restart > /var/lib/pgsql/pgcluu/logs/cron-pgcluu-restart.log 2>&1

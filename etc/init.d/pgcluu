@@ -1,0 +1,229 @@
+#!/bin/sh
+#
+# pgcluu_collectd daemon    by Tony LEGEAY
+#
+# chkconfig: 345 99 01
+# description: pgcluu_collectd server
+# processname: pgcluu_collectd
+
+# Source function library.
+INITD=/etc/rc.d/init.d
+. $INITD/functions
+
+# Find the name of the script
+NAME=`basename $0`
+if [ ${NAME:0:1} = "S" -o ${NAME:0:1} = "K" ]
+then
+	NAME=${NAME:3}
+fi
+
+# For SELinux we need to use 'runuser' not 'su'
+if [ -x /sbin/runuser ]
+then
+    SU=runuser
+else
+    SU=su
+fi
+
+# Define variable for locale parameter:
+LOCALEPARAMETER=$2
+
+# Set defaults for configuration variables
+PGDB=$(echo ${NAME} | awk -F_ {'print $3'})
+PGCLUUUSER=postgres
+PGCLUUGROUP=postgres
+PGCLUUROOT=/var/lib/pgsql/pgcluu
+
+PGCLUURUNDIR=$PGCLUUROOT/run
+[ -d "${PGCLUURUNDIR}" ] || mkdir -p ${PGCLUURUNDIR}
+chown -R ${PGCLUUUSER}:${PGCLUUGROUP} ${PGCLUURUNDIR}
+
+PGCLUUCONFFILE=${PGCLUUROOT}/conf/pgcluu.conf
+[ -f "${PGCLUUCONFFILE}" ] || exit 1
+source ${PGCLUUCONFFILE}
+
+[ -f "$PGCLUUROOT/${NAME}" ] || exit 1
+
+script_result=0
+
+start(){
+	
+	[ -x "$PGCLUUROOT/${NAME}" ] || exit 5
+	cd $PGCLUUROOT
+	. ~/.bash_profile
+
+	
+	nbserver=${#tabpgserver[@]}
+	imaxserver=$(($nbserver-1))
+
+	idx=0
+	while [ "$idx" -le "$imaxserver" ]
+	do
+	
+		pgserver=${tabpgserver[$idx]}
+		pgport=""
+		if [ "${tabpgport[$idx]}" = "" ]; then
+			pgport=${pgdefaultport}
+		else
+			pgport=${tabpgport[$idx]}
+		fi
+
+		pguser=""
+		if [ "${tabpguser[$idx]}" = "" ]; then
+			pguser=${pgdefaultuser}
+		else
+			pguser=${tabpguser[$idx]}
+		fi
+		
+		pgssh=""
+		if [ "${tabpgssh[$idx]}" = "" ]; then
+			pgssh=${pgdefaultssh}
+		else
+			pgssh=${tabpgssh[$idx]}
+		fi
+		
+		PGCLUULOGDIR=${PGCLUUROOT}/logs/${pgserver}-${pgport}
+		[ -d "${PGCLUULOGDIR}" ] || mkdir -p ${PGCLUULOGDIR}
+		chown -R ${PGCLUUUSER}:${PGCLUUGROUP} ${PGCLUULOGDIR}
+
+		PGCLUUDATADIR=$PGCLUUROOT/data/${pgserver}-${pgport}
+		[ -d "${PGCLUUDATADIR}" ] || mkdir -p ${PGCLUUDATADIR}
+		chown -R ${PGCLUUUSER}:${PGCLUUGROUP} ${PGCLUUDATADIR}
+		
+		PGCLUULOGFILE=${PGCLUUROOT}/logs/${pgserver}-${pgport}/${NAME}.log
+		
+		PGCLUUUNIQNAME=${NAME}-${pgserver}-${pgport}
+		lockfile="/var/lock/subsys/${PGCLUUUNIQNAME}"
+		pidfile="${PGCLUURUNDIR}/${PGCLUUUNIQNAME}.pid"
+		
+		PGCLUU_START="Starting ${PGCLUUUNIQNAME} service:"
+		echo -n "${PGCLUU_START}"
+		
+		echo "#####################################################" >> $PGCLUULOGFILE
+		echo "$(date +"%d-%m-%Y %H:%M:%S") : Démarrage PGCLUU" >> $PGCLUULOGFILE
+		echo "#####################################################" >> $PGCLUULOGFILE
+		chown $PGCLUUUSER:$PGCLUUGROUP $PGCLUULOGFILE >> $PGCLUULOGFILE
+		
+		PATH=$PATH:$HOME/bin
+		if [ "${pgssh}" = "true" ]; then
+			su - $PGCLUUUSER -c "$PGCLUUROOT/pgcluu_collectd -r -v --pid-file=${pidfile} -i 60 ${PGCLUUDATADIR} -h ${pgserver} -U ${pguser} --dbname postgres --enable-ssh --ssh-user postgres" >> $PGCLUULOGFILE 2>&1 &
+		else
+			su - $PGCLUUUSER -c "$PGCLUUROOT/pgcluu_collectd -r -v --pid-file=${pidfile} -i 60 ${PGCLUUDATADIR} -h ${pgserver} -U ${pguser} --dbname postgres --disable-sar" >> $PGCLUULOGFILE 2>&1 &
+		 fi
+		pgcluupid=$!
+		sleep 1
+		pid=$(ps -q ${pgcluupid} -o pid=)
+		
+		if [ "x$pid" != x ]
+		then
+			success "$PGCLUU_START"
+			touch "$lockfile"
+			#echo $pid > "$pidfile"
+			echo
+		else
+			failure "$PGCLUU_START"
+			echo
+			script_result=1
+		fi
+		
+		idx=$(($idx + 1))
+	done
+	exit
+}
+
+status(){
+	nblockfiles=0
+	for lockfile in `find /var/lock/subsys/ -name ${NAME}*`
+	do
+		nblockfiles=$(($nblockfiles+1))
+		PGCLUUUNIQSHORTNAME=`basename ${lockfile}`
+		
+		lockfile="/var/lock/subsys/${PGCLUUUNIQSHORTNAME}"
+		pidfile="${PGCLUURUNDIR}/${PGCLUUUNIQSHORTNAME}.pid"
+		pid=
+		
+		if [ -f $pidfile ]; then
+			pgcluupid=$(cat ${pidfile})
+			pid=$(ps -q ${pgcluupid} -o pid=)
+			echo -n "Status ${PGCLUUUNIQSHORTNAME} service:   PID(${pid})  "
+		else
+			echo -n "Status ${PGCLUUUNIQSHORTNAME} service:                "
+		fi
+		
+		if [ "x$pid" != x ]
+		then
+			success "${PGCLUUUNIQSHORTNAME}"
+			echo
+		else
+			failure "${PGCLUUUNIQSHORTNAME}"
+			echo
+		fi
+	done
+	if [ "${nblockfiles}" = "0" ]; then
+		STATUSTEXT="No lock file for pgcluu in /var/lock/subsys"
+		echo -n "$STATUSTEXT"
+		success "$STATUSTEXT"
+		echo
+	fi
+}
+
+stop(){
+	nblockfiles=0
+	for lockfile in `find /var/lock/subsys/ -name ${NAME}*`
+	do
+		nblockfiles=$(($nblockfiles+1))
+		PGCLUUUNIQSHORTNAME=`basename ${lockfile}`
+		echo -n "Stopping ${PGCLUUUNIQSHORTNAME} service: "
+		
+		lockfile="/var/lock/subsys/${PGCLUUUNIQSHORTNAME}"
+		pidfile="${PGCLUURUNDIR}/${PGCLUUUNIQSHORTNAME}.pid"
+		
+		pid=$(cat ${pidfile})
+		kill $pid > /dev/null 2>&1 < /dev/null
+		ret=$? 
+		if [ $ret -eq 0 ]
+		then
+			echo_success
+			rm -f "$pidfile"
+			rm -f "$lockfile"
+		else
+			echo_failure
+			script_result=1
+		fi
+		echo
+	done
+	if [ "${nblockfiles}" = "0" ]; then
+		STATUSTEXT="No lock file for pgcluu in /var/lock/subsys"
+		echo -n "$STATUSTEXT"
+		success "$STATUSTEXT"
+		echo
+	fi
+}
+
+
+
+restart(){
+    stop
+    start
+}
+
+# See how we were called.
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  status)
+	status
+	;;
+  restart)
+	restart
+	;;
+  *)
+	echo $"Usage: $0 {start|stop|status|restart}"
+	exit 2
+esac
+
+exit $script_result
