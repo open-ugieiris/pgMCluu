@@ -26,7 +26,7 @@ $ yum install perl
 ```
 
 - Install [pgcluu](https://github.com/darold/pgcluu/)  
-Copy `pgmcluu\*` into `/var/lib/pgsql/pgcluu/`  
+- Copy `pgmcluu\*` into `/var/lib/pgsql/pgcluu/`  
 
 - Modify privileges
 
